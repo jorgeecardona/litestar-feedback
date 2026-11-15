@@ -256,6 +256,23 @@ class SupportContract:
         assert res.status_code == 200, res.text
         assert res.json()["status"] == "resolved"
 
+    def test_internal_note_does_not_make_customer_view_stale(
+        self, client: Any, customer_headers: Headers, operator_headers: Headers
+    ) -> None:
+        issue = _open(client, customer_headers)
+        last = _last_event_id(_customer_view(client, issue["id"], customer_headers))
+        client.post(
+            f"/admin/issues/{issue['id']}/comments",
+            json={"body": "checking logs", "internal": True},
+            headers=operator_headers,
+        )
+        res = client.post(
+            f"/issues/{issue['id']}/resolve",
+            json={"last_seen_event_id": last},
+            headers=customer_headers,
+        )
+        assert res.status_code == 200, res.text
+
     def test_resolve_with_stale_view_is_409(self, client: Any, customer_headers: Headers) -> None:
         issue = _open(client, customer_headers)
         res = client.post(

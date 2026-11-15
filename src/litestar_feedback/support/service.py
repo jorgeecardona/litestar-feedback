@@ -359,13 +359,16 @@ class SupportService:
 
         ``reason`` is written first as an internal note, so the operator sees why an issue was
         closed as spam or duplicate.
+
+        ``last_seen_event_id`` is compared with the newest event that ``side`` can see: a
+        customer never sees internal notes, so they do not make a customer's view stale.
         """
         if last_seen_event_id is not None:
+            newest_query = select(IssueEvent.id).where(IssueEvent.issue_id == issue.id)
+            if side is Side.CUSTOMER:
+                newest_query = newest_query.where(IssueEvent.internal.is_(False))
             newest = await self.session.scalar(
-                select(IssueEvent.id)
-                .where(IssueEvent.issue_id == issue.id)
-                .order_by(IssueEvent.seq.desc())
-                .limit(1)
+                newest_query.order_by(IssueEvent.seq.desc()).limit(1)
             )
             if newest != last_seen_event_id:
                 raise StaleThread("the thread moved since you last read it")
