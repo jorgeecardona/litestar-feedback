@@ -44,3 +44,19 @@ tasks:
       - '~:test'
       - '~:build'
       - '~:version-guard'
+
+  # Mint a PyPI OIDC token and upload dist/*. Invoked by release (or by hand).
+  publish:
+    command: 'sh scripts/pypi-publish'
+    deps: ['~:build']
+    options:
+      cache: false
+      runInCI: false
+
+  # main-only: no-op while RELEASE_ENABLED is unset or the version is already on PyPI;
+  # else publish. Must stay runnable in CI (no runInCI:false), or `:release` finds no tasks.
+  release:
+    command: 'sh scripts/release'
+    deps: ['~:ci']
+    options:
+      cache: false

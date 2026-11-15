@@ -31,6 +31,12 @@ make check
 - Rule tests use `FakeClock` from `tests/conftest.py` to move time. Never sleep.
 - Litestar deprecation warnings are errors (`filterwarnings` in `pyproject.toml`).
 
+## Release
+
+- CI runs one job: `moon run :ci`, or `moon run :release` on `main`.
+- `:release` publishes to PyPI through OIDC Trusted Publishing when `RELEASE_ENABLED=1` and
+  `__version__` is not on PyPI yet.
+
 ## Style
 
 - ruff, line length 100. pyright strict on `src`, `tests`, `examples`.
@@ -62,4 +68,5 @@ make check
 ## Do not
 
 - Add `Co-Authored-By` lines to commits.
-- Publish to PyPI or create the GitLab project without Jorge's instruction.
+- Set the CI/CD variable `RELEASE_ENABLED=1` without Jorge's instruction. While it is unset,
+  `scripts/release` publishes nothing.
