@@ -4,6 +4,24 @@ All notable changes to `litestar-feedback`. Format: [Keep a Changelog](https://k
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-15
+
+### Added
+
+- A customer who writes on a closed issue gets 409 with `code: "issue_closed"`, and can open a
+  new issue that points to it with `follows_id`.
+- Operators set an issue's kind with `POST /admin/issues/{id}/kind`. The change shows as an
+  internal note and does not restart the 14-day timer.
+- Every support error has a stable `code` next to `detail`.
+- The contract test has 9 more tests (57 in all). Products that run it need these routes.
+
+### Fixed
+
+- A customer could not resolve an issue after an operator wrote an internal note on it: the
+  resolve answered 409 every time.
+
+## [0.1.1] - 2026-11-15
+
 ### Added
 
 - `SupportPlugin`: a customer support inbox with issues, a reply thread and an operator inbox,

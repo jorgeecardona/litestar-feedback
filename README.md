@@ -24,14 +24,19 @@ Requires Python 3.12+, Litestar 2.23+ and SQLAlchemy 2.0 async. No Advanced Alch
 `issue_attachments`, and routes under `/issues` and `/admin/issues`.
 
 - Statuses `open`, `waiting_customer`, `resolved`, `closed`. A move not allowed is 409.
-- `closed` is final. A comment on a closed issue is 409.
+- `closed` is final. A comment on a closed issue is 409 with `code: "issue_closed"`. The client
+  then opens a new issue with `follows_id` set to the closed one.
 - A customer comment reopens a `waiting_customer` or `resolved` issue.
 - A `waiting_customer` or `resolved` issue moves on after 14 days with no activity.
-- Internal notes (`internal: true`) never reach customer routes.
+- Internal notes (`internal: true`) never reach customer routes, and never make a customer's
+  `last_seen_event_id` stale.
+- The operator sets `kind` after triage. The change is written as an internal note.
 - A public operator reply calls your mailer. The event records `notified_at` or the reason it
   was skipped.
 - Customer messages are rate limited per actor (20 per hour by default). Over the limit is 429.
 - Images are uploaded first, then attached by id. No store configured means 503.
+- Every error body has `status_code`, `detail` and a stable `code`, for example `issue_closed`
+  or `stale_thread`.
 
 ### Wire it
 
@@ -114,6 +119,7 @@ are strings so UUID and integer keys fit the same columns.
 | GET | `/admin/issues/{id}` | operator |
 | POST | `/admin/issues/{id}/comments` | operator |
 | POST | `/admin/issues/{id}/status` | operator |
+| POST | `/admin/issues/{id}/kind` | operator |
 
 ### Tables
 

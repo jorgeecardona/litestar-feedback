@@ -43,6 +43,10 @@ make check
 
 - `issue_events.seq` orders a thread. Never order by `created_at`: two events can share it.
 - Status moves only through `SupportService.set_status` or `comment`.
+- `last_seen_event_id` is compared with the newest event the caller's side can see. Customers
+  never see internal notes, so those are skipped for them.
+- `updated_at` drives the 14-day timers. An event that is not activity (the kind note) passes
+  `touch=False` to `_append`.
 - `scope_id` and `user_id` are text so integer keys fit. Hosts pass `str(id)`.
 - Replay never imports support. Support hands its replay references over through
   `ReplayAdapter.protected_sessions`.
