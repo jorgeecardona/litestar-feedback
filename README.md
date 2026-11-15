@@ -1,12 +1,19 @@
 # litestar-feedback
 
 Litestar plugins for an in-app customer support inbox and session replay. `SupportPlugin`
-stores customer issues with a reply thread and an operator inbox. Each plugin works alone.
+stores customer issues with a reply thread and an operator inbox. `ReplayPlugin` stores rrweb
+recordings, plays them back from a moment, and builds click heatmaps. Each plugin works alone.
 
 ## Install
 
 ```bash
 uv add litestar-feedback
+```
+
+For replay, install the `replay` extra (empty today, kept for future dependencies):
+
+```bash
+uv add "litestar-feedback[replay]"
 ```
 
 Requires Python 3.12+, Litestar 2.23+ and SQLAlchemy 2.0 async. No Advanced Alchemy.
@@ -154,6 +161,103 @@ class TestSupportContract(SupportContract):
 ```
 
 Set the rate limit high in the app under test. Every contract test posts as one customer.
+
+## Session replay
+
+`ReplayPlugin` stores rrweb events in chunks, one recording per page load. The browser recorder
+is not part of this package: run rrweb in the browser and post its events to the ingest route.
+
+- A session id belongs to the first caller that writes to it. Another scope or user gets 409.
+- A repeated `seq` is ignored (`"action": "exists"`), so the browser can retry safely.
+- Caps: 1 MiB per chunk, 5,000 events per chunk, 20 MiB per session. Over a cap is 413.
+- Playback with `offset_ms` loads from the last full snapshot before that moment.
+- Clicks are kept per page path and viewport width bucket, for heatmaps.
+- `prune` deletes old recordings. `delete_user` deletes a user's recordings.
+- Recordings in the adapter's `protected_sessions` survive both.
+
+### Ingest API
+
+`POST /replay/ingest`, signed in as the user being recorded:
+
+```json
+{
+  "session_id": "7c0e4b7e-2f1a-4c55-9a51-0d6c1f3f6a10",
+  "seq": 0,
+  "events": [{"type": 4, "timestamp": 1767225600000, "data": {"href": "https://app.example/orders", "width": 1280, "height": 800}}],
+  "entry_url": "https://app.example/orders",
+  "viewport_w": 1280,
+  "viewport_h": 800
+}
+```
+
+1. Pick a new `session_id` (UUID) on every page load.
+2. Buffer rrweb events. Send them every 10 seconds or 400 events, with `seq` counting from 0.
+3. On 5xx, retry the same body. On 4xx, drop the batch.
+4. To link a support issue, put `replay_session_id` and `replay_offset_ms` (milliseconds since
+   the first event) in the issue's `context`.
+
+The answer is `{"action": "appended" | "exists", "event_count": n}`. 403 means no consent.
+
+### Wire it
+
+```python
+from litestar_feedback.replay import ReplayAdapter, ReplayConfig, ReplayPlugin
+from litestar_feedback.support import referenced_replay_sessions
+
+replay = ReplayPlugin(
+    adapter=ReplayAdapter(
+        caller=caller,                     # same functions as for SupportPlugin
+        session=session,
+        retention_days=30,
+        consent=has_analytics_consent,     # async (Caller, Request) -> bool
+        protected_sessions=referenced_replay_sessions,  # only if SupportPlugin is installed
+    ),
+    config=ReplayConfig(path="/v1"),
+)
+app = Litestar(plugins=[replay])
+```
+
+Run the jobs from your scheduler. `system_caller` is an operator `Caller`:
+
+```python
+result = await replay.prune(system_caller)            # PruneResult(candidates, deleted, protected)
+deleted = await replay.delete_user(system_caller, str(user.id))
+```
+
+A runnable version is [examples/replay_app.py](examples/replay_app.py).
+
+### Adapter
+
+| Field | Type | What it does |
+|---|---|---|
+| `caller` | `async (Request) -> Caller` | Who is calling. Operators can play back and see heatmaps. |
+| `session` | `(Caller) -> async context manager of AsyncSession` | One transaction per request. |
+| `chunk_store` | `ChunkStore` or None | `async put`, `get`, `delete`. None stores chunks in `replay_chunks.events`. |
+| `retention_days` | `int` | `prune` deletes recordings whose last event is older. 0 keeps all. |
+| `consent` | `async (Caller, Request) -> bool` or None | False answers 403 and stores nothing. |
+| `protected_sessions` | `async (AsyncSession) -> set[UUID]` or None | Recordings that prune and user deletion keep. |
+
+`ReplayConfig` holds `path`, the three caps, `viewport_buckets` (default `0, 640, 1024, 1440`),
+the heatmap grid size, `list_limit` and `clock`.
+
+### Routes
+
+| Method | Path | Who |
+|---|---|---|
+| POST | `/replay/ingest` | the recorded user |
+| GET | `/admin/replay/sessions` | operator |
+| GET | `/admin/replay/sessions/{id}?offset_ms=` | operator |
+| DELETE | `/admin/replay/sessions/{id}` | operator |
+| GET | `/admin/replay/heatmaps` | operator |
+| GET | `/admin/replay/heatmap?path=&viewport_bucket=` | operator |
+
+A heatmap is a grid: 20 columns across the viewport width, rows of 50 pixels. Click `y` is in
+viewport pixels, not page pixels: rrweb reports clicks relative to the viewport.
+
+### Tables
+
+`replay_sessions`, `replay_chunks`, `replay_clicks`. Create them with
+`litestar_feedback.replay.migration.create_tables(op)` in an Alembic migration.
 
 ## Links
 

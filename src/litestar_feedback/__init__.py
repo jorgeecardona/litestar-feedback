@@ -4,4 +4,4 @@ Import each plugin from its subpackage: ``litestar_feedback.support`` or
 ``litestar_feedback.replay``. This module only holds the version.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"

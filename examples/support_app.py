@@ -104,12 +104,10 @@ def make_app(
     adapter = SupportAdapter(
         caller=caller_from_header, session=open_session, mailer=mailer, storage=storage
     )
-    app = Litestar(
+    return Litestar(
         plugins=[SupportPlugin(adapter=adapter, config=config or SupportConfig())],
         on_startup=[create_tables],
     )
-    app.state["sessions"] = sessions
-    return app
 
 
 app = make_app(storage=MemoryStore(), mailer=RecordingMailer())

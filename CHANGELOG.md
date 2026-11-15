@@ -16,3 +16,11 @@ All notable changes to `litestar-feedback`. Format: [Keep a Changelog](https://k
 - Customer messages are rate limited per user.
 - An Alembic helper creates the three tables.
 - The standard's contract test ships as a pytest plugin you run against your own app.
+- `ReplayPlugin`: stores rrweb session recordings sent in chunks, one per page load.
+- Nobody can write into another user's recording.
+- Chunk and session size caps.
+- Playback can start at a moment, for example the moment a support issue was filed.
+- Click heatmaps per page and viewport width.
+- Old recordings are pruned; recordings that live issues point to are kept.
+- A user's recordings can be deleted with the user.
+- An optional consent check runs before each chunk is stored.
