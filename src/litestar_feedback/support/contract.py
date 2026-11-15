@@ -405,6 +405,51 @@ class SupportContract:
         )
         assert res.status_code == 409
 
+    # -- triage -------------------------------------------------------------------------
+
+    def test_operator_sets_kind(
+        self, client: Any, customer_headers: Headers, operator_headers: Headers
+    ) -> None:
+        issue = _open(client, customer_headers)
+        res = client.post(
+            f"/admin/issues/{issue['id']}/kind", json={"kind": "question"}, headers=operator_headers
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["kind"] == "question"
+        assert _customer_view(client, issue["id"], customer_headers)["kind"] == "question"
+
+    def test_kind_change_is_an_internal_note(
+        self, client: Any, customer_headers: Headers, operator_headers: Headers
+    ) -> None:
+        issue = _open(client, customer_headers)
+        before = _customer_view(client, issue["id"], customer_headers)["events"]
+        client.post(
+            f"/admin/issues/{issue['id']}/kind", json={"kind": "idea"}, headers=operator_headers
+        )
+        op = _operator_view(client, issue["id"], operator_headers)
+        assert any(e["internal"] and "idea" in (e["body"] or "") for e in op["events"])
+        assert _customer_view(client, issue["id"], customer_headers)["events"] == before
+
+    def test_unknown_kind_on_set_kind_is_rejected(
+        self, client: Any, customer_headers: Headers, operator_headers: Headers
+    ) -> None:
+        issue = _open(client, customer_headers)
+        res = client.post(
+            f"/admin/issues/{issue['id']}/kind", json={"kind": "rant"}, headers=operator_headers
+        )
+        assert res.status_code in {400, 422}
+
+    def test_kind_can_be_set_on_closed_issue(
+        self, client: Any, customer_headers: Headers, operator_headers: Headers
+    ) -> None:
+        issue = _open(client, customer_headers)
+        assert _set_status(client, issue["id"], "closed", operator_headers).status_code == 200
+        res = client.post(
+            f"/admin/issues/{issue['id']}/kind", json={"kind": None}, headers=operator_headers
+        )
+        assert res.status_code == 200, res.text
+        assert res.json()["kind"] is None
+
     # -- access -------------------------------------------------------------------------
 
     @pytest.mark.parametrize(
@@ -414,6 +459,7 @@ class SupportContract:
             ("get", "/admin/issues/{id}"),
             ("post", "/admin/issues/{id}/comments"),
             ("post", "/admin/issues/{id}/status"),
+            ("post", "/admin/issues/{id}/kind"),
         ],
     )
     def test_customer_cannot_use_admin_routes(
@@ -421,7 +467,12 @@ class SupportContract:
     ) -> None:
         issue = _open(client, customer_headers)
         url = path.format(id=issue["id"])
-        body = {"body": "x", "to": "closed", "last_seen_event_id": str(uuid.uuid4())}
+        body = {
+            "body": "x",
+            "to": "closed",
+            "kind": "bug",
+            "last_seen_event_id": str(uuid.uuid4()),
+        }
         if method == "get":
             res = client.get(url, headers=customer_headers)
         else:

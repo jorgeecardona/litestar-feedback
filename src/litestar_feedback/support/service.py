@@ -28,6 +28,7 @@ from litestar_feedback.support.models import (
     Issue,
     IssueAttachment,
     IssueEvent,
+    IssueKind,
     IssueStatus,
     Side,
 )
@@ -419,6 +420,28 @@ class SupportService:
             )
         await self._move(issue, to, actor=actor, side=side)
 
+    async def set_kind(self, issue: Issue, kind: IssueKind | None, *, actor: str) -> None:
+        """Set the issue's ``kind`` after triage, and record the change as an internal note.
+
+        Allowed in every status, closed included. The note does not change ``updated_at``, so
+        triage never restarts a 14-day timer. Setting the same kind again writes nothing.
+        """
+        new = kind.value if kind is not None else None
+        if new == issue.kind:
+            return
+        await self._append(
+            issue,
+            side=Side.OPERATOR,
+            event_type=EventType.COMMENT,
+            actor=actor,
+            body=f"kind: {issue.kind or 'none'} -> {new or 'none'}",
+            internal=True,
+            skipped="internal",
+            touch=False,
+        )
+        issue.kind = new
+        await self.session.flush()
+
     async def set_register_ref(self, issue: Issue, register_ref: str | None) -> None:
         """Record the register entry the bridge filed for this issue."""
         issue.register_ref = register_ref
@@ -564,7 +587,9 @@ class SupportService:
         internal: bool = False,
         skipped: str | None = None,
         at: datetime | None = None,
+        touch: bool = True,
     ) -> IssueEvent:
+        """Write the next event of the issue. ``touch=False`` leaves ``updated_at`` alone."""
         await self.session.flush()
         last = await self.session.scalar(
             select(func.max(IssueEvent.seq)).where(IssueEvent.issue_id == issue.id)
@@ -583,7 +608,8 @@ class SupportService:
             created_at=now,
         )
         self.session.add(event)
-        issue.updated_at = now
+        if touch:
+            issue.updated_at = now
         await self.session.flush()
         return event
 

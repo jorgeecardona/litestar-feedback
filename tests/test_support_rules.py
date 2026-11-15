@@ -418,3 +418,16 @@ def test_contract_without_fixtures_says_what_to_define(pytester: pytest.Pytester
     result = pytester.runpytest_inprocess("-k", "test_customer_opens_issue")
     result.assert_outcomes(errors=1)
     result.stdout.fnmatch_lines(["*define the 'client' fixture in your conftest.py*"])
+
+
+# -- triage ------------------------------------------------------------------------------
+
+
+def test_kind_change_keeps_timer(timed: Client, clock: FakeClock) -> None:
+    issue = _open(timed)
+    _reply(timed, issue["id"])
+    clock.advance(timedelta(days=10))
+    res = timed.post(f"/admin/issues/{issue['id']}/kind", json={"kind": "bug"}, headers=OPERATOR)
+    assert res.status_code == 200, res.text
+    clock.advance(timedelta(days=4))
+    assert timed.get(f"/issues/{issue['id']}", headers=CUSTOMER).json()["status"] == "resolved"

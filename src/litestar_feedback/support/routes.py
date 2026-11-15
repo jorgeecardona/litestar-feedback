@@ -33,6 +33,7 @@ from litestar_feedback.support.schemas import (
     EventOut,
     IssueCreate,
     IssueOut,
+    KindChange,
     OperatorCommentCreate,
     ResolveRequest,
     StatusChange,
@@ -369,6 +370,25 @@ async def set_status(
         return await _thread_out(svc, await svc.thread(issue, include_internal=True), operator=True)
 
 
+@post("/admin/issues/{issue_id:uuid}/kind", status_code=HTTP_200_OK)
+async def set_kind(
+    request: AnyRequest,
+    issue_id: IssueId,
+    data: JSONBody[KindChange],
+    feedback_support: Runtime,
+) -> IssueOut:
+    """Set the issue's kind after triage. The change is written as an internal note."""
+    rt = feedback_support
+    caller = await rt.operator(request)
+    kind = data.kind.value if data.kind is not None else None
+    audit.info("%s set issue %s kind to %s", caller.actor, issue_id, kind)
+    async with rt.adapter.session(caller) as session:
+        svc = rt.service(session)
+        issue = await svc.get(issue_id, scope_id=None)
+        await svc.set_kind(issue, data.kind, actor=caller.actor)
+        return await _thread_out(svc, await svc.thread(issue, include_internal=True), operator=True)
+
+
 # -- errors ------------------------------------------------------------------------------
 
 _STATUS_FOR: dict[type[SupportError], int] = {
@@ -406,5 +426,6 @@ ROUTE_HANDLERS = [
     admin_get_issue,
     comment_as_operator,
     set_status,
+    set_kind,
 ]
 """Every support route, in the order of ISSUES-STANDARD.md."""

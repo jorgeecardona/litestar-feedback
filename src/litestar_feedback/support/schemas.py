@@ -74,6 +74,12 @@ class StatusChange(msgspec.Struct, frozen=True, kw_only=True):
     reason: Reason | None = None
 
 
+class KindChange(msgspec.Struct, frozen=True, kw_only=True):
+    """Body of ``POST /admin/issues/{id}/kind``. ``kind=null`` clears it."""
+
+    kind: IssueKind | None
+
+
 class AttachmentOut(msgspec.Struct, frozen=True, kw_only=True):
     """An attachment. ``url`` is a short-lived download link, or None without a store."""
 
