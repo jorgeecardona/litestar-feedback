@@ -4,32 +4,22 @@ All notable changes to `litestar-feedback`. Format: [Keep a Changelog](https://k
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-11-15
-
-### Added
-
-- A customer who writes on a closed issue gets 409 with `code: "issue_closed"`, and can open a
-  new issue that points to it with `follows_id`.
-- Operators set an issue's kind with `POST /admin/issues/{id}/kind`. The change shows as an
-  internal note and does not restart the 14-day timer.
-- Every support error has a stable `code` next to `detail`.
-- The contract test has 9 more tests (57 in all). Products that run it need these routes.
-
-### Fixed
-
-- A customer could not resolve an issue after an operator wrote an internal note on it: the
-  resolve answered 409 every time.
-
-## [0.1.1] - 2026-11-15
+First release. Nothing is on PyPI yet.
 
 ### Added
 
 - `SupportPlugin`: a customer support inbox with issues, a reply thread and an operator inbox,
   following ISSUES-STANDARD.md.
 - Issues move between `open`, `waiting_customer`, `resolved` and `closed`; other moves get 409.
+- A customer reply on a closed issue opens a new issue that points to the closed one
+  (`follows_id`).
 - Waiting and resolved issues move on by themselves after 14 days.
 - Operators can write internal notes that customers never see.
-- Customers get a mail (through your mailer) when an operator replies.
+- Operators set an issue's kind with `POST /admin/issues/{id}/kind`. The change shows as an
+  internal note and does not restart the 14-day timer.
+- Customers get a mail (through your mailer) when an operator replies. The mail goes out only
+  after the reply is committed.
+- Every support error has a stable `code` next to `detail`.
 - Screenshots upload first and attach by id; uploads need a store you provide.
 - Customer messages are rate limited per user.
 - An Alembic helper creates the three tables.

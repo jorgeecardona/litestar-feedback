@@ -45,6 +45,9 @@ make check
 - Status moves only through `SupportService.set_status` or `comment`.
 - `last_seen_event_id` is compared with the newest event the caller's side can see. Customers
   never see internal notes, so those are skipped for them.
+- Reply mail goes out after the commit: `SupportService` queues notices in `outbox`, and the
+  route calls `SupportRuntime.deliver` after its session block. Never call the mailer inside a
+  session.
 - `updated_at` drives the 14-day timers. An event that is not activity (the kind note) passes
   `touch=False` to `_append`.
 - `scope_id` and `user_id` are text so integer keys fit. Hosts pass `str(id)`.

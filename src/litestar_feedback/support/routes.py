@@ -51,9 +51,11 @@ from litestar_feedback.support.service import (
     SupportService,
     Thread,
     TransitionError,
+    deliver,
 )
 
 audit = logging.getLogger("litestar_feedback.support.audit")
+logger = logging.getLogger(__name__)
 
 DEFAULT_PAGE = 50
 
@@ -83,6 +85,21 @@ class SupportRuntime:
         if not caller.is_operator:
             raise PermissionDeniedException("operator access required")
         return caller
+
+    async def deliver(self, caller: Caller, svc: SupportService) -> None:
+        """Send the reply mail ``svc`` queued, then record the outcomes in a new transaction.
+
+        Call it after the request's transaction committed. A failure to record is logged: the
+        events keep ``notify_skipped_reason='pending'``.
+        """
+        if not svc.outbox:
+            return
+        deliveries = await deliver(self.adapter.mailer, svc.outbox, self.config)
+        try:
+            async with self.adapter.session(caller) as session:
+                await self.service(session).record(deliveries)
+        except Exception:
+            logger.exception("could not record mail outcomes for %d events", len(deliveries))
 
     def page(self, limit: int | None) -> int:
         """Clamp a requested page size to ``1..config.list_limit``."""
@@ -179,7 +196,6 @@ async def create_issue(
                 source=data.source,
                 context=data.context,
                 dedupe_key=data.dedupe_key,
-                follows_id=data.follows_id,
                 attachment_ids=tuple(data.attachment_ids),
             ),
         )
@@ -227,7 +243,10 @@ async def comment_as_customer(
     data: JSONBody[CommentCreate],
     feedback_support: Runtime,
 ) -> EventOut:
-    """Add a customer comment. It reopens a ``resolved`` or ``waiting_customer`` issue."""
+    """Add a customer comment. It reopens a ``resolved`` or ``waiting_customer`` issue.
+
+    On a closed issue it opens a new issue that follows it. The event's ``issue_id`` says which.
+    """
     rt = feedback_support
     caller = await rt.adapter.caller(request)
     async with rt.adapter.session(caller) as session:
@@ -240,6 +259,8 @@ async def comment_as_customer(
             body=data.body,
             attachment_ids=tuple(data.attachment_ids),
         )
+        if event.issue_id != issue.id:
+            issue = await svc.get(event.issue_id, scope_id=caller.scope_id)
         thread = await svc.thread(issue, include_internal=False)
         return await _event_out(
             svc, event, list(thread.attachments.get(event.id, ())), operator=False
@@ -340,9 +361,12 @@ async def comment_as_operator(
             attachment_ids=tuple(data.attachment_ids),
         )
         thread = await svc.thread(issue, include_internal=True)
-        return await _event_out(
+        out = await _event_out(
             svc, event, list(thread.attachments.get(event.id, ())), operator=True
         )
+    # The session block above committed. Mail only now, so a failed commit sends nothing.
+    await rt.deliver(caller, svc)
+    return out
 
 
 @post("/admin/issues/{issue_id:uuid}/status", status_code=HTTP_200_OK)

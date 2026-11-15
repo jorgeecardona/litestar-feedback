@@ -26,10 +26,6 @@ class IssueCreate(msgspec.Struct, frozen=True, kw_only=True):
 
     ``context`` holds page data from the widget: ``page_url``, ``viewport_w``, ``viewport_h``,
     ``user_agent``, ``replay_session_id``, ``replay_offset_ms``, ``version``.
-
-    ``follows_id`` is a closed issue in the caller's scope that this issue continues. A comment
-    on a closed issue answers 409 with ``code: "issue_closed"``; the client then opens a new
-    issue with ``follows_id``.
     """
 
     body: Body
@@ -38,12 +34,15 @@ class IssueCreate(msgspec.Struct, frozen=True, kw_only=True):
     source: Source = "widget"
     context: dict[str, Any] | None = None
     dedupe_key: DedupeKey | None = None
-    follows_id: uuid.UUID | None = None
     attachment_ids: list[uuid.UUID] = msgspec.field(default_factory=list[uuid.UUID])
 
 
 class CommentCreate(msgspec.Struct, frozen=True, kw_only=True):
-    """Body of ``POST /issues/{id}/comments``."""
+    """Body of ``POST /issues/{id}/comments``.
+
+    On a closed issue the comment opens a new issue whose ``follows_id`` is the closed one. The
+    returned event then has the new issue's id in ``issue_id``.
+    """
 
     body: Body
     attachment_ids: list[uuid.UUID] = msgspec.field(default_factory=list[uuid.UUID])
@@ -111,6 +110,8 @@ class EventOut(msgspec.Struct, frozen=True, kw_only=True):
 
 class IssueOut(msgspec.Struct, frozen=True, kw_only=True):
     """An issue. ``events`` is empty on list routes.
+
+    ``follows_id`` is the closed issue this one continues, when a customer replied on it.
 
     For customers, ``context`` leaves out the replay keys and ``dedupe_key`` and
     ``register_ref`` are None.

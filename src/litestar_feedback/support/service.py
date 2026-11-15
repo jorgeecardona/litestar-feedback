@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -74,7 +74,7 @@ class TransitionError(SupportError):
 
 
 class IssueClosed(TransitionError):
-    """A comment on a closed issue (HTTP 409). Open a new issue with ``follows_id`` instead."""
+    """An operator comment on a closed issue (HTTP 409). A customer comment opens a follow-up."""
 
     code = "issue_closed"
 
@@ -117,7 +117,6 @@ class NewIssue:
     source: str = "widget"
     context: Mapping[str, Any] | None = None
     dedupe_key: str | None = None
-    follows_id: uuid.UUID | None = None
     attachment_ids: Sequence[uuid.UUID] = ()
 
 
@@ -149,13 +148,27 @@ def _status(issue: Issue) -> IssueStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class Delivery:
+    """What happened when one reply notice went to the mailer, after the commit."""
+
+    event_id: uuid.UUID
+    notified_at: datetime | None
+    skipped: str | None
+
+
+@dataclass(frozen=True, slots=True)
 class SupportService:
-    """Reads and writes the support tables inside one session."""
+    """Reads and writes the support tables inside one session.
+
+    Reply mail is never sent from here. ``outbox`` collects the notices, and the caller sends
+    them with ``deliver`` after the transaction commits, so a rolled back reply sends no mail.
+    """
 
     session: AsyncSession
     config: SupportConfig
     storage: AttachmentStore | None = None
     mailer: Mailer | None = None
+    outbox: list[ReplyNotice] = field(default_factory=list[ReplyNotice])
 
     def _now(self) -> datetime:
         return self.config.clock()
@@ -240,13 +253,7 @@ class SupportService:
         A ``dedupe_key`` that matches a live (not closed) issue in the same scope returns that
         issue with ``created=False`` and writes nothing.
 
-        ``follows_id`` must be a closed issue in the caller's scope: another scope's issue
-        raises ``IssueNotFound``, a live one raises ``TransitionError`` (reply there instead).
         """
-        if new.follows_id is not None:
-            followed = await self.get(new.follows_id, scope_id=caller.scope_id)
-            if _status(followed) is not IssueStatus.CLOSED:
-                raise TransitionError("that issue is still open: reply on it instead")
         if new.dedupe_key is not None:
             existing = await self.session.scalar(
                 select(Issue).where(
@@ -270,7 +277,6 @@ class SupportService:
             status=IssueStatus.OPEN.value,
             context=dict(new.context) if new.context is not None else None,
             dedupe_key=new.dedupe_key,
-            follows_id=new.follows_id,
             created_at=now,
             updated_at=now,
         )
@@ -339,14 +345,20 @@ class SupportService:
         internal: bool = False,
         attachment_ids: Sequence[uuid.UUID] = (),
     ) -> IssueEvent:
-        """Add a comment and move the status to whoever must act next.
+        """Add a comment and move the status to whoever must act next. Return the new event.
 
         A customer comment moves ``waiting_customer`` or ``resolved`` to ``open``. A public
-        operator comment moves ``open`` to ``waiting_customer`` and notifies the customer.
-        An internal note changes no status. A closed issue raises ``IssueClosed``.
+        operator comment moves ``open`` to ``waiting_customer`` and queues a mail to the
+        customer. An internal note changes no status.
+
+        On a closed issue, a customer comment opens a new issue that follows it, and the
+        returned event is that issue's ``opened`` event (its ``issue_id`` is the new issue).
+        An operator comment on a closed issue raises ``IssueClosed``. (ISSUES-STANDARD)
         """
         if _status(issue) is IssueStatus.CLOSED:
-            raise IssueClosed("this issue is closed: open a new issue with follows_id")
+            if side is Side.OPERATOR:
+                raise IssueClosed("this issue is closed")
+            return await self._follow_up(issue, caller, body, attachment_ids)
         if side is Side.CUSTOMER:
             await self._check_rate_limit(caller)
         event = await self._append(
@@ -366,6 +378,45 @@ class SupportService:
         if side is Side.OPERATOR and not internal:
             await self._notify(issue, event)
         return event
+
+    async def _follow_up(
+        self, closed: Issue, caller: Caller, body: str, attachment_ids: Sequence[uuid.UUID]
+    ) -> IssueEvent:
+        """Open a new issue with ``follows_id`` set to ``closed``, starting with ``body``.
+
+        Scope, reporter, kind and source come from the closed issue. A closed issue whose
+        reporter was deleted gets the caller as reporter.
+        """
+        await self._check_rate_limit(caller)
+        now = self._now()
+        issue = Issue(
+            id=uuid.uuid4(),
+            scope_id=closed.scope_id,
+            user_id=closed.user_id if closed.user_id is not None else caller.user_id,
+            kind=closed.kind,
+            title=_title_from(body),
+            body=body,
+            source=closed.source,
+            status=IssueStatus.OPEN.value,
+            follows_id=closed.id,
+            created_at=now,
+            updated_at=now,
+        )
+        self.session.add(issue)
+        event = await self._append(
+            issue, side=Side.CUSTOMER, event_type=EventType.OPENED, actor=caller.actor, body=body
+        )
+        await self._bind(caller, issue, event, attachment_ids)
+        return event
+
+    async def record(self, deliveries: Iterable[Delivery]) -> None:
+        """Write the mailer outcomes of ``deliver`` onto their events."""
+        for d in deliveries:
+            await self.session.execute(
+                update(IssueEvent)
+                .where(IssueEvent.id == d.event_id)
+                .values(notified_at=d.notified_at, notify_skipped_reason=d.skipped)
+            )
 
     async def resolve_as_customer(
         self, issue: Issue, caller: Caller, *, last_seen_event_id: uuid.UUID
@@ -674,6 +725,7 @@ class SupportService:
         if self.mailer is None:
             event.notify_skipped_reason = "no_mailer"
             return
+        event.notify_skipped_reason = "pending"
         notice = ReplyNotice(
             issue_id=issue.id,
             event_id=event.id,
@@ -683,16 +735,33 @@ class SupportService:
             reply_body=event.body or "",
             operator=event.actor,
         )
+        self.outbox.append(notice)
+
+
+async def deliver(
+    mailer: Mailer | None, notices: Iterable[ReplyNotice], config: SupportConfig
+) -> list[Delivery]:
+    """Send each notice and return what happened. Call it only after the commit.
+
+    A mailer exception is logged and recorded as ``send_failed``; it never raises.
+    """
+    if mailer is None:
+        return []
+    out: list[Delivery] = []
+    for notice in notices:
         try:
-            sent = await self.mailer.send_reply(notice)
+            sent = await mailer.send_reply(notice)
         except Exception:
-            logger.exception("mailer failed for issue %s event %s", issue.id, event.id)
-            event.notify_skipped_reason = "send_failed"
-            return
+            logger.exception(
+                "mailer failed for issue %s event %s", notice.issue_id, notice.event_id
+            )
+            out.append(Delivery(notice.event_id, None, "send_failed"))
+            continue
         if sent:
-            event.notified_at = self._now()
+            out.append(Delivery(notice.event_id, config.clock(), None))
         else:
-            event.notify_skipped_reason = "no_email"
+            out.append(Delivery(notice.event_id, None, "no_email"))
+    return out
 
 
 def _title_from(body: str) -> str:

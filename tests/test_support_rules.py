@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -12,11 +13,13 @@ import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
+from litestar import Litestar
 from litestar.testing import TestClient
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
 
-from examples.support_app import MemoryStore, RecordingMailer, make_app
+from examples.support_app import MemoryStore, RecordingMailer, caller_from_header, make_app
 from litestar_feedback.caller import Caller
 from litestar_feedback.support import (
     IssueAttachment,
@@ -24,8 +27,10 @@ from litestar_feedback.support import (
     IssueStatus,
     ReplyNotice,
     Side,
+    SupportAdapter,
     SupportBase,
     SupportConfig,
+    SupportPlugin,
     SupportService,
     referenced_replay_sessions,
 )
@@ -108,37 +113,49 @@ def test_open_issue_has_no_timer(timed: Client, clock: FakeClock) -> None:
     assert timed.get(f"/issues/{issue['id']}", headers=CUSTOMER).json()["status"] == "open"
 
 
-def test_follow_up_on_issue_closed_by_timer(timed: Client, clock: FakeClock) -> None:
+def test_reply_on_issue_closed_by_timer_opens_follow_up(timed: Client, clock: FakeClock) -> None:
     issue = _open(timed)
     _reply(timed, issue["id"])
     clock.advance(timedelta(days=14))
     timed.get("/issues", headers=CUSTOMER)  # waiting_customer -> resolved
     clock.advance(timedelta(days=14))
-    body = {"body": "again", "follows_id": issue["id"]}
-    res = timed.post("/issues", json=body, headers=CUSTOMER)
+    res = timed.post(f"/issues/{issue['id']}/comments", json={"body": "again"}, headers=CUSTOMER)
     assert res.status_code == 201, res.text
-    assert res.json()["follows_id"] == issue["id"]
+    follow_up = timed.get(f"/issues/{res.json()['issue_id']}", headers=CUSTOMER).json()
+    assert follow_up["follows_id"] == issue["id"]
 
 
 # -- follow-ups --------------------------------------------------------------------------
 
 
-def test_dedupe_match_wins_over_follows_id() -> None:
-    for client in _client(config=SupportConfig(rate_limit_count=0)):
+def _close(client: Client, issue_id: str) -> None:
+    last = client.get(f"/admin/issues/{issue_id}", headers=OPERATOR).json()["events"][-1]["id"]
+    res = client.post(
+        f"/admin/issues/{issue_id}/status",
+        json={"to": "closed", "last_seen_event_id": last},
+        headers=OPERATOR,
+    )
+    assert res.status_code == 200, res.text
+
+
+def test_follow_up_keeps_scope_reporter_and_kind() -> None:
+    for client in _client():
         closed = _open(client)
-        last = client.get(f"/admin/issues/{closed['id']}", headers=OPERATOR).json()
-        res = client.post(
-            f"/admin/issues/{closed['id']}/status",
-            json={"to": "closed", "last_seen_event_id": last["events"][-1]["id"]},
-            headers=OPERATOR,
-        )
-        assert res.status_code == 200, res.text
-        live = client.post("/issues", json={"body": "x", "dedupe_key": "k"}, headers=CUSTOMER)
-        body = {"body": "y", "dedupe_key": "k", "follows_id": closed["id"]}
-        res = client.post("/issues", json=body, headers=CUSTOMER)
-        assert res.status_code == 200
-        assert res.json()["id"] == live.json()["id"]
-        assert res.json()["follows_id"] is None
+        client.post(f"/admin/issues/{closed['id']}/kind", json={"kind": "bug"}, headers=OPERATOR)
+        _close(client, closed["id"])
+        res = client.post(f"/issues/{closed['id']}/comments", json={"body": "x"}, headers=CUSTOMER)
+        new = client.get(f"/admin/issues/{res.json()['issue_id']}", headers=OPERATOR).json()
+        assert (new["scope_id"], new["user_id"], new["kind"]) == ("tenant-a", "user-a", "bug")
+        assert new["title"] == "x"
+
+
+def test_follow_up_is_rate_limited(clock: FakeClock) -> None:
+    config = SupportConfig(clock=clock, rate_limit_count=1)
+    for client in _client(config=config):
+        closed = _open(client)
+        _close(client, closed["id"])
+        res = client.post(f"/issues/{closed['id']}/comments", json={"body": "x"}, headers=CUSTOMER)
+        assert res.status_code == 429
 
 
 # -- rate limit --------------------------------------------------------------------------
@@ -201,6 +218,74 @@ def test_no_mailer_is_recorded() -> None:
         assert (
             _admin_event(client, issue["id"], event["id"])["notify_skipped_reason"] == "no_mailer"
         )
+
+
+def test_failed_commit_sends_no_mail() -> None:
+    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    fail = {"commit": False}
+
+    @asynccontextmanager
+    async def open_session(caller: Caller) -> AsyncGenerator[AsyncSession]:
+        async with sessions.begin() as session:
+            yield session
+            if fail["commit"]:
+                raise RuntimeError("commit failed")
+
+    async def setup() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(SupportBase.metadata.create_all)
+
+    mailer = RecordingMailer()
+    adapter = SupportAdapter(caller=caller_from_header, session=open_session, mailer=mailer)
+    app = Litestar(
+        plugins=[SupportPlugin(adapter=adapter, config=SupportConfig())], on_startup=[setup]
+    )
+    with TestClient(app=app) as client:
+        issue = _open(client)
+        fail["commit"] = True
+        res = client.post(
+            f"/admin/issues/{issue['id']}/comments", json={"body": "on it"}, headers=OPERATOR
+        )
+        assert res.status_code == 500
+        assert mailer.sent == []
+        fail["commit"] = False
+        events = client.get(f"/admin/issues/{issue['id']}", headers=OPERATOR).json()["events"]
+        assert [e["event_type"] for e in events] == ["opened"]
+
+
+def test_mail_is_sent_after_commit() -> None:
+    committed: list[bool] = []
+
+    class _Checking:
+        async def send_reply(self, notice: ReplyNotice) -> bool:
+            committed.append(seen_commit["done"])
+            return True
+
+    engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+    sessions = async_sessionmaker(engine, expire_on_commit=False)
+    seen_commit = {"done": False}
+
+    @asynccontextmanager
+    async def open_session(caller: Caller) -> AsyncGenerator[AsyncSession]:
+        seen_commit["done"] = False
+        async with sessions.begin() as session:
+            yield session
+        seen_commit["done"] = True
+
+    async def setup() -> None:
+        async with engine.begin() as conn:
+            await conn.run_sync(SupportBase.metadata.create_all)
+
+    adapter = SupportAdapter(caller=caller_from_header, session=open_session, mailer=_Checking())
+    app = Litestar(
+        plugins=[SupportPlugin(adapter=adapter, config=SupportConfig())], on_startup=[setup]
+    )
+    with TestClient(app=app) as client:
+        issue = _open(client)
+        event = _reply(client, issue["id"])
+        assert committed == [True]
+        assert _admin_event(client, issue["id"], event["id"])["notified_at"] is not None
 
 
 class _NoAddress:
