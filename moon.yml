@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://moonrepo.dev/schemas/project.json
+#
+# litestar-feedback -- single project at the repo root. Every task runs through `uv run`
+# (see .moon/toolchain.yml for why moon's Python toolchain is not used).
+id: 'litestar-feedback'
+layer: 'library'
+language: 'python'
+
+tasks:
+  lint:
+    command: 'uv run ruff check src tests examples'
+    inputs: ['src/**/*.py', 'tests/**/*.py', 'examples/**/*.py', 'pyproject.toml']
+
+  format-check:
+    command: 'uv run ruff format --check src tests examples'
+    inputs: ['src/**/*.py', 'tests/**/*.py', 'examples/**/*.py', 'pyproject.toml']
+
+  typecheck:
+    command: 'uv run pyright'
+    inputs: ['src/**/*.py', 'tests/**/*.py', 'examples/**/*.py', 'pyproject.toml']
+
+  test:
+    command: 'uv run pytest -q'
+    inputs: ['src/**/*.py', 'tests/**/*.py', 'examples/**/*.py', 'pyproject.toml']
+
+  build:
+    command: 'uv build --out-dir dist'
+    deps: ['~:test']
+    inputs: ['src/**/*', 'pyproject.toml', 'README.md', 'CHANGELOG.md', 'LICENSE']
+    outputs: ['dist']
+
+  # CI-side "a src/ change carries a version bump". Reads the diff base from CI env.
+  version-guard:
+    command: 'sh scripts/ci-version-guard'
+    options:
+      cache: false
+
+  ci:
+    command: 'noop'
+    deps:
+      - '~:lint'
+      - '~:format-check'
+      - '~:typecheck'
+      - '~:test'
+      - '~:build'
+      - '~:version-guard'

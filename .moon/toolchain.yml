@@ -1,0 +1,4 @@
+# yaml-language-server: $schema=https://moonrepo.dev/schemas/toolchain.json
+#
+# moon's Python toolchain is not used. Every task runs as a system command through
+# `uv run`; uv (pinned in .prototools) provisions Python itself.

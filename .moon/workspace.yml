@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://moonrepo.dev/schemas/workspace.json
+projects:
+  litestar-feedback: '.'
+
+vcs:
+  client: 'git'
+  defaultBranch: 'main'
