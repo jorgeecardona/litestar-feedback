@@ -51,23 +51,43 @@ REPLAY_CONTEXT_KEYS: frozenset[str] = frozenset({"replay_session_id", "replay_of
 
 
 class SupportError(Exception):
-    """Base class of the errors the routes turn into HTTP responses."""
+    """Base class of the errors the routes turn into HTTP responses.
+
+    ``code`` is a stable string in the error body, so a client can tell two errors with the
+    same HTTP status apart.
+    """
+
+    code = "support_error"
 
 
 class IssueNotFound(SupportError):
     """No issue with that id in the caller's scope (HTTP 404)."""
 
+    code = "issue_not_found"
+
 
 class TransitionError(SupportError):
-    """The status move is not in ``ALLOWED_TRANSITIONS``, or the issue is closed (HTTP 409)."""
+    """The status move is not in ``ALLOWED_TRANSITIONS`` (HTTP 409)."""
+
+    code = "transition_not_allowed"
+
+
+class IssueClosed(TransitionError):
+    """A comment on a closed issue (HTTP 409). Open a new issue with ``follows_id`` instead."""
+
+    code = "issue_closed"
 
 
 class StaleThread(SupportError):
     """``last_seen_event_id`` is not the newest event: the thread moved (HTTP 409)."""
 
+    code = "stale_thread"
+
 
 class RateLimited(SupportError):
     """The actor posted ``rate_limit_count`` messages inside the window (HTTP 429)."""
+
+    code = "rate_limited"
 
     def __init__(self, retry_after: timedelta) -> None:
         super().__init__("too many messages, try again later")
@@ -77,9 +97,13 @@ class RateLimited(SupportError):
 class AttachmentRejected(SupportError):
     """The upload or the attachment ids are not acceptable (HTTP 422)."""
 
+    code = "attachment_rejected"
+
 
 class AttachmentsUnavailable(SupportError):
     """No ``AttachmentStore`` is configured (HTTP 503)."""
+
+    code = "attachments_unavailable"
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,6 +116,7 @@ class NewIssue:
     source: str = "widget"
     context: Mapping[str, Any] | None = None
     dedupe_key: str | None = None
+    follows_id: uuid.UUID | None = None
     attachment_ids: Sequence[uuid.UUID] = ()
 
 
@@ -213,7 +238,14 @@ class SupportService:
 
         A ``dedupe_key`` that matches a live (not closed) issue in the same scope returns that
         issue with ``created=False`` and writes nothing.
+
+        ``follows_id`` must be a closed issue in the caller's scope: another scope's issue
+        raises ``IssueNotFound``, a live one raises ``TransitionError`` (reply there instead).
         """
+        if new.follows_id is not None:
+            followed = await self.get(new.follows_id, scope_id=caller.scope_id)
+            if _status(followed) is not IssueStatus.CLOSED:
+                raise TransitionError("that issue is still open: reply on it instead")
         if new.dedupe_key is not None:
             existing = await self.session.scalar(
                 select(Issue).where(
@@ -237,6 +269,7 @@ class SupportService:
             status=IssueStatus.OPEN.value,
             context=dict(new.context) if new.context is not None else None,
             dedupe_key=new.dedupe_key,
+            follows_id=new.follows_id,
             created_at=now,
             updated_at=now,
         )
@@ -309,10 +342,10 @@ class SupportService:
 
         A customer comment moves ``waiting_customer`` or ``resolved`` to ``open``. A public
         operator comment moves ``open`` to ``waiting_customer`` and notifies the customer.
-        An internal note changes no status. A closed issue raises ``TransitionError``.
+        An internal note changes no status. A closed issue raises ``IssueClosed``.
         """
         if _status(issue) is IssueStatus.CLOSED:
-            raise TransitionError("this issue is closed")
+            raise IssueClosed("this issue is closed: open a new issue with follows_id")
         if side is Side.CUSTOMER:
             await self._check_rate_limit(caller)
         event = await self._append(

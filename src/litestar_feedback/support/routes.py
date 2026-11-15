@@ -142,6 +142,7 @@ def _issue_out(summary: IssueSummary, events: list[EventOut], *, operator: bool)
         updated_at=issue.updated_at,
         has_unread_reply=summary.has_unread_reply,
         events=events,
+        follows_id=issue.follows_id,
         dedupe_key=issue.dedupe_key if operator else None,
         register_ref=issue.register_ref if operator else None,
     )
@@ -177,6 +178,7 @@ async def create_issue(
                 source=data.source,
                 context=data.context,
                 dedupe_key=data.dedupe_key,
+                follows_id=data.follows_id,
                 attachment_ids=tuple(data.attachment_ids),
             ),
         )
@@ -380,15 +382,17 @@ _STATUS_FOR: dict[type[SupportError], int] = {
 
 
 def support_error_handler(_: AnyRequest, exc: Exception) -> Response[dict[str, Any]]:
-    """Turn a ``SupportError`` into Litestar's usual ``{status_code, detail}`` error body."""
-    code = next(
+    """Turn a ``SupportError`` into Litestar's ``{status_code, detail}`` body plus ``code``."""
+    status = next(
         (status for kind, status in _STATUS_FOR.items() if isinstance(exc, kind)),
         HTTP_409_CONFLICT,
     )
+    code = exc.code if isinstance(exc, SupportError) else SupportError.code
     headers: dict[str, str] = {}
     if isinstance(exc, RateLimited):
         headers["Retry-After"] = str(max(1, math.ceil(exc.retry_after.total_seconds())))
-    return Response({"status_code": code, "detail": str(exc)}, status_code=code, headers=headers)
+    body = {"status_code": status, "detail": str(exc), "code": code}
+    return Response(body, status_code=status, headers=headers)
 
 
 ROUTE_HANDLERS = [

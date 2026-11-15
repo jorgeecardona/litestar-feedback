@@ -26,6 +26,10 @@ class IssueCreate(msgspec.Struct, frozen=True, kw_only=True):
 
     ``context`` holds page data from the widget: ``page_url``, ``viewport_w``, ``viewport_h``,
     ``user_agent``, ``replay_session_id``, ``replay_offset_ms``, ``version``.
+
+    ``follows_id`` is a closed issue in the caller's scope that this issue continues. A comment
+    on a closed issue answers 409 with ``code: "issue_closed"``; the client then opens a new
+    issue with ``follows_id``.
     """
 
     body: Body
@@ -34,6 +38,7 @@ class IssueCreate(msgspec.Struct, frozen=True, kw_only=True):
     source: Source = "widget"
     context: dict[str, Any] | None = None
     dedupe_key: DedupeKey | None = None
+    follows_id: uuid.UUID | None = None
     attachment_ids: list[uuid.UUID] = msgspec.field(default_factory=list[uuid.UUID])
 
 
@@ -118,5 +123,6 @@ class IssueOut(msgspec.Struct, frozen=True, kw_only=True):
     updated_at: datetime
     has_unread_reply: bool
     events: list[EventOut]
+    follows_id: uuid.UUID | None = None
     dedupe_key: str | None = None
     register_ref: str | None = None

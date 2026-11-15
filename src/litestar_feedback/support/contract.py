@@ -210,6 +210,44 @@ class SupportContract:
             f"/issues/{issue['id']}/comments", json={"body": "hello?"}, headers=customer_headers
         )
         assert res.status_code == 409
+        assert res.json()["code"] == "issue_closed"
+
+    def test_follow_up_on_closed_issue(
+        self, client: Any, customer_headers: Headers, operator_headers: Headers
+    ) -> None:
+        closed = _open(client, customer_headers)
+        assert _set_status(client, closed["id"], "closed", operator_headers).status_code == 200
+        res = client.post(
+            "/issues",
+            json={"body": "It broke again", "follows_id": closed["id"]},
+            headers=customer_headers,
+        )
+        assert res.status_code == 201, res.text
+        assert res.json()["follows_id"] == closed["id"]
+        assert res.json()["id"] != closed["id"]
+
+    def test_follow_up_on_live_issue_is_409(self, client: Any, customer_headers: Headers) -> None:
+        live = _open(client, customer_headers)
+        res = client.post(
+            "/issues", json={"body": "again", "follows_id": live["id"]}, headers=customer_headers
+        )
+        assert res.status_code == 409
+
+    def test_follow_up_on_other_tenant_issue_is_404(
+        self,
+        client: Any,
+        customer_headers: Headers,
+        other_tenant_headers: Headers,
+        operator_headers: Headers,
+    ) -> None:
+        closed = _open(client, customer_headers)
+        assert _set_status(client, closed["id"], "closed", operator_headers).status_code == 200
+        res = client.post(
+            "/issues",
+            json={"body": "mine now", "follows_id": closed["id"]},
+            headers=other_tenant_headers,
+        )
+        assert res.status_code == 404
 
     def test_operator_reply_on_closed_is_409(
         self, client: Any, customer_headers: Headers, operator_headers: Headers

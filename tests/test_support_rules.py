@@ -108,6 +108,39 @@ def test_open_issue_has_no_timer(timed: Client, clock: FakeClock) -> None:
     assert timed.get(f"/issues/{issue['id']}", headers=CUSTOMER).json()["status"] == "open"
 
 
+def test_follow_up_on_issue_closed_by_timer(timed: Client, clock: FakeClock) -> None:
+    issue = _open(timed)
+    _reply(timed, issue["id"])
+    clock.advance(timedelta(days=14))
+    timed.get("/issues", headers=CUSTOMER)  # waiting_customer -> resolved
+    clock.advance(timedelta(days=14))
+    body = {"body": "again", "follows_id": issue["id"]}
+    res = timed.post("/issues", json=body, headers=CUSTOMER)
+    assert res.status_code == 201, res.text
+    assert res.json()["follows_id"] == issue["id"]
+
+
+# -- follow-ups --------------------------------------------------------------------------
+
+
+def test_dedupe_match_wins_over_follows_id() -> None:
+    for client in _client(config=SupportConfig(rate_limit_count=0)):
+        closed = _open(client)
+        last = client.get(f"/admin/issues/{closed['id']}", headers=OPERATOR).json()
+        res = client.post(
+            f"/admin/issues/{closed['id']}/status",
+            json={"to": "closed", "last_seen_event_id": last["events"][-1]["id"]},
+            headers=OPERATOR,
+        )
+        assert res.status_code == 200, res.text
+        live = client.post("/issues", json={"body": "x", "dedupe_key": "k"}, headers=CUSTOMER)
+        body = {"body": "y", "dedupe_key": "k", "follows_id": closed["id"]}
+        res = client.post("/issues", json=body, headers=CUSTOMER)
+        assert res.status_code == 200
+        assert res.json()["id"] == live.json()["id"]
+        assert res.json()["follows_id"] is None
+
+
 # -- rate limit --------------------------------------------------------------------------
 
 

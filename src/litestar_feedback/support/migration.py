@@ -59,11 +59,15 @@ def create_tables(op: Any, *, scope_fk: str | None = None, user_fk: str | None =
         sa.Column("context", json_type, nullable=True),
         sa.Column("dedupe_key", sa.String(200), nullable=True),
         sa.Column("register_ref", sa.Text(), nullable=True),
+        sa.Column(
+            "follows_id", sa.Uuid(), sa.ForeignKey("issues.id", ondelete="SET NULL"), nullable=True
+        ),
         _ts("created_at"),
         _ts("updated_at"),
     )
     op.create_index("ix_issues_scope_id", "issues", ["scope_id"])
     op.create_index("ix_issues_user_id", "issues", ["user_id"])
+    op.create_index("ix_issues_follows_id", "issues", ["follows_id"])
     op.create_index("ix_issues_status_updated_at", "issues", ["status", "updated_at"])
     op.create_index(
         "uq_issues_scope_dedupe_live",

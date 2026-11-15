@@ -100,6 +100,10 @@ class Issue(SupportBase):
     context: Mapped[dict[str, Any] | None] = mapped_column(JSONColumn)
     dedupe_key: Mapped[str | None] = mapped_column(String(200))
     register_ref: Mapped[str | None] = mapped_column(Text)
+    # The closed issue this one continues. A closed thread takes no replies. (ISSUES-STANDARD)
+    follows_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("issues.id", ondelete="SET NULL"), index=True
+    )
     created_at: Mapped[datetime] = mapped_column(UTCDateTime)
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime)
 
