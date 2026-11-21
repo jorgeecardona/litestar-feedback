@@ -1,44 +1,43 @@
-# litestar-feedback
+<h1 align="center">litestar-feedback</h1>
 
-Litestar plugins for an in-app customer support inbox and session replay. `SupportPlugin`
-stores customer issues with a reply thread and an operator inbox. `ReplayPlugin` stores rrweb
-recordings, plays them back from a moment, and builds click heatmaps. Each plugin works alone.
+<p align="center"><strong>Add a customer support inbox and session replay to a Litestar app, stored in your own SQLAlchemy database.</strong></p>
+
+<p align="center">
+  <a href="https://pypi.org/project/litestar-feedback/"><img alt="PyPI" src="https://img.shields.io/pypi/v/litestar-feedback?style=flat-square"></a>
+  <a href="https://pypi.org/project/litestar-feedback/"><img alt="Python versions" src="https://img.shields.io/pypi/pyversions/litestar-feedback?style=flat-square"></a>
+  <a href="https://gitlab.com/cardona-oss/litestar-feedback/-/pipelines"><img alt="Pipeline" src="https://img.shields.io/gitlab/pipeline-status/cardona-oss%2Flitestar-feedback?branch=main&style=flat-square"></a>
+  <a href="https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-blue?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <a href="https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/README.md#support-inbox">Support inbox</a> ·
+  <a href="https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/README.md#session-replay">Session replay</a> ·
+  <a href="https://gitlab.com/cardona-oss/litestar-feedback/-/tree/main/examples">Examples</a> ·
+  <a href="https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/CHANGELOG.md">Changelog</a>
+</p>
+
+---
+
+## Overview
+
+`SupportPlugin` stores customer issues with a reply thread and gives operators an inbox.
+`ReplayPlugin` stores rrweb recordings, returns them for playback from a chosen moment, and
+builds click heatmaps. Each plugin works alone. Status: alpha.
 
 ## Install
 
 ```bash
-uv add litestar-feedback
+pip install litestar-feedback
 ```
 
-For replay, install the `replay` extra (empty today, kept for future dependencies):
-
-```bash
-uv add "litestar-feedback[replay]"
-```
+Replay needs no extra dependency. The `replay` extra exists and is empty.
 
 Requires Python 3.12+, Litestar 2.23+ and SQLAlchemy 2.0 async. No Advanced Alchemy.
 
 ## Support inbox
 
-`SupportPlugin` follows ISSUES-STANDARD.md: tables `issues`, `issue_events`,
-`issue_attachments`, and routes under `/issues` and `/admin/issues`.
-
-- Statuses `open`, `waiting_customer`, `resolved`, `closed`. A move not allowed is 409.
-- `closed` is final. A customer comment on a closed issue opens a new issue whose `follows_id` is
-  the closed one. The answer is the new issue's first event, so its `issue_id` is the new issue.
-  An operator comment on a closed issue is 409 with `code: "issue_closed"`.
-- A customer comment reopens a `waiting_customer` or `resolved` issue.
-- A `waiting_customer` or `resolved` issue moves on after 14 days with no activity.
-- Internal notes (`internal: true`) never reach customer routes, and never make a customer's
-  `last_seen_event_id` stale.
-- The operator sets `kind` after triage. The change is written as an internal note.
-- A public operator reply calls your mailer after the transaction commits. A rolled back reply
-  sends no mail. The event records `notified_at` or the reason it was skipped (`pending` until
-  the mailer answers).
-- Customer messages are rate limited per actor (20 per hour by default). Over the limit is 429.
-- Images are uploaded first, then attached by id. No store configured means 503.
-- Every error body has `status_code`, `detail` and a stable `code`, for example `issue_closed`
-  or `stale_thread`.
+`SupportPlugin` adds three tables (`issues`, `issue_events`, `issue_attachments`) and routes
+under `/issues` and `/admin/issues`.
 
 ### Wire it
 
@@ -90,7 +89,27 @@ app = Litestar(
 )
 ```
 
-A runnable version is [examples/support_app.py](examples/support_app.py).
+A runnable version is [examples/support_app.py](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/examples/support_app.py).
+
+### Rules
+
+- Statuses `open`, `waiting_customer`, `resolved`, `closed`. A move not allowed is 409.
+- `closed` is final. A customer comment on a closed issue opens a new issue whose `follows_id` is
+  the closed one. The answer is the new issue's first event, so its `issue_id` is the new issue.
+  An operator comment on a closed issue is 409 with `code: "issue_closed"`.
+- A customer comment reopens a `waiting_customer` or `resolved` issue.
+- A `waiting_customer` or `resolved` issue moves on after 14 days with no activity.
+- Internal notes (`internal: true`) never reach customer routes, and never make a customer's
+  `last_seen_event_id` stale.
+- The operator sets `kind` after triage. The change is written as an internal note.
+- A public operator reply calls your mailer after the transaction commits. A rolled back reply
+  sends no mail. The event records `notified_at` or the reason it was skipped (`pending` until
+  the mailer answers).
+- Customer messages are rate limited per actor (20 per hour by default). Over the limit is 429.
+- Images are uploaded first, then attached by id. No store configured means 503.
+- An error from these rules (404, 409, 422, 429, 503) has `status_code`, `detail` and a stable
+  `code`, for example `issue_closed` or `stale_thread`. Litestar's own 400, 401 and 403 have no
+  `code`.
 
 ### Adapter
 
@@ -105,7 +124,8 @@ A runnable version is [examples/support_app.py](examples/support_app.py).
 are strings so UUID and integer keys fit the same columns.
 
 `SupportConfig` holds `path`, the two timers, the rate limit, upload limits, `system_actor`,
-`list_limit` and `clock`. Defaults follow the standard.
+`list_limit` and `clock`. Defaults: 14 days for each timer, 20 messages per hour, 4 MiB per
+upload.
 
 ### Routes
 
@@ -144,8 +164,22 @@ Then add your row-level security policies on `scope_id` in the same migration.
 
 ### Jobs to schedule
 
-The plugin applies timers when an issue is read. These `SupportService` methods are for a
-scheduler:
+The plugin applies timers when an issue is read. A scheduler can also apply them. Build a
+`SupportService` on a session and call the method:
+
+```python
+from litestar_feedback.support import SupportConfig, SupportService
+
+config = SupportConfig(path="/v1")  # the same config the plugin got
+
+
+async def sweep() -> int:
+    async with sessions.begin() as s:
+        service = SupportService(session=s, config=config, storage=storage)
+        return await service.sweep_timers()
+```
+
+`storage` is your `AttachmentStore`. `reap_staged` and `forget_user` delete files from it.
 
 - `sweep_timers()`: apply due timers to every issue.
 - `reap_staged()`: delete uploads no message claimed within 24 hours.
@@ -154,7 +188,7 @@ scheduler:
 
 ### Contract test
 
-The package ships the standard's black-box contract as a pytest plugin.
+The package ships a black-box contract test of the support routes as a pytest plugin.
 
 1. Define five fixtures in `tests/conftest.py`: `client`, `customer_headers`,
    `operator_headers`, `other_tenant_headers`, `seeded_issue`.
@@ -232,7 +266,7 @@ result = await replay.prune(system_caller)            # PruneResult(candidates, 
 deleted = await replay.delete_user(system_caller, str(user.id))
 ```
 
-A runnable version is [examples/replay_app.py](examples/replay_app.py).
+A runnable version is [examples/replay_app.py](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/examples/replay_app.py).
 
 ### Adapter
 
@@ -269,5 +303,5 @@ viewport pixels, not page pixels: rrweb reports clicks relative to the viewport.
 
 ## Links
 
-- [CHANGELOG.md](CHANGELOG.md)
-- [AGENTS.md](AGENTS.md)
+- [CHANGELOG.md](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/CHANGELOG.md)
+- [AGENTS.md](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/AGENTS.md)

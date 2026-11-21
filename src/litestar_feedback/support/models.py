@@ -64,7 +64,7 @@ class EventType(StrEnum):
 
 
 class SupportBase(DeclarativeBase):
-    """Declarative base that owns the support tables' metadata."""
+    """Declarative base of the support tables."""
 
 
 class Issue(SupportBase):

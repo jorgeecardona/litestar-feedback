@@ -1,15 +1,27 @@
 # Changelog
 
-All notable changes to `litestar-feedback`. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+All notable changes to `litestar-feedback`. Format:
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-First release. Nothing is on PyPI yet.
+## [0.2.2] - 2026-11-21
+
+### Changed
+
+- The README has a header with badges and links, and its links work on PyPI.
+- The README says which errors have a `code`, and shows how to run the timers from a
+  scheduler.
+
+## [0.2.1] - 2026-11-15
+
+First release on PyPI.
 
 ### Added
 
-- `SupportPlugin`: a customer support inbox with issues, a reply thread and an operator inbox,
-  following ISSUES-STANDARD.md.
+- `SupportPlugin`: a customer support inbox with issues, a reply thread and an operator inbox.
+  It adds the tables `issues`, `issue_events` and `issue_attachments`, and routes under
+  `/issues` and `/admin/issues`.
 - Issues move between `open`, `waiting_customer`, `resolved` and `closed`; other moves get 409.
 - A customer reply on a closed issue opens a new issue that points to the closed one
   (`follows_id`).
@@ -21,9 +33,9 @@ First release. Nothing is on PyPI yet.
   after the reply is committed.
 - Every support error has a stable `code` next to `detail`.
 - Screenshots upload first and attach by id; uploads need a store you provide.
-- Customer messages are rate limited per user.
+- Customer messages are rate limited per actor (20 per hour by default).
 - An Alembic helper creates the three tables.
-- The standard's contract test ships as a pytest plugin you run against your own app.
+- A contract test of the support routes ships as a pytest plugin you run against your own app.
 - `ReplayPlugin`: stores rrweb session recordings sent in chunks, one per page load.
 - Nobody can write into another user's recording.
 - Chunk and session size caps.

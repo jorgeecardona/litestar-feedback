@@ -50,7 +50,7 @@ SessionId = FromPath[uuid.UUID]
 class IngestRequest(msgspec.Struct, frozen=True, kw_only=True):
     """Body of ``POST /replay/ingest``: one chunk of rrweb events.
 
-    ``seq`` numbers the chunks of a session from 0 or 1; a repeated ``seq`` is ignored.
+    ``seq`` numbers the chunks of a session from 0; a repeated ``seq`` is ignored.
     ``entry_url`` and the viewport are read from the first chunk only.
     """
 

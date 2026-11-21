@@ -7,17 +7,31 @@ Guidance for agents working in this repo. Humans: read README.md.
 `litestar-feedback` ships Litestar plugins. Each plugin lives in its own subpackage and never
 imports another plugin:
 
-- `src/litestar_feedback/support/`: `SupportPlugin`, the customer support inbox
-  (ISSUES-STANDARD.md).
+- `src/litestar_feedback/support/`: `SupportPlugin`, the customer support inbox. Tables `issues`,
+  `issue_events`, `issue_attachments`; routes under `/issues` and `/admin/issues`.
 - `src/litestar_feedback/replay/`: `ReplayPlugin`, rrweb session replay and click heatmaps.
   `events.py` holds the pure rrweb parsing.
 - `src/litestar_feedback/caller.py`, `_sqltypes.py`: shared by all plugins.
 
 ## Build
 
-1. `proto install` (moon and uv, pinned in `.prototools`).
-2. `uv sync`.
-3. `make install-hooks` once after cloning.
+1. Install moon and uv, pinned in `.prototools`:
+
+   ```bash
+   proto install
+   ```
+
+2. Install the dependencies:
+
+   ```bash
+   uv sync
+   ```
+
+3. Install the git hooks, once after cloning:
+
+   ```bash
+   make install-hooks
+   ```
 
 ## Test
 
@@ -68,5 +82,6 @@ make check
 ## Do not
 
 - Add `Co-Authored-By` lines to commits.
-- Set the CI/CD variable `RELEASE_ENABLED=1` without Jorge's instruction. While it is unset,
-  `scripts/release` publishes nothing.
+- Change the CI/CD variable `RELEASE_ENABLED` without Jorge's instruction. It is `1` today, so a
+  push to `main` with a new `__version__` publishes to PyPI. Unset, `scripts/release` publishes
+  nothing.

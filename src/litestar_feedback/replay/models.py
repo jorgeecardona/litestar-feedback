@@ -20,7 +20,7 @@ KEY_LENGTH = 64
 
 
 class ReplayBase(DeclarativeBase):
-    """Declarative base that owns the replay tables' metadata."""
+    """Declarative base of the replay tables."""
 
 
 class ReplaySession(ReplayBase):

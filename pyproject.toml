@@ -1,7 +1,7 @@
 [project]
 name = "litestar-feedback"
 dynamic = ["version"]  # the single source of truth is __version__ in src/litestar_feedback/__init__.py
-description = "Litestar plugins for an in-app customer support inbox and session replay"
+description = "Litestar plugins for a customer support inbox and rrweb session replay, in your own database"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
