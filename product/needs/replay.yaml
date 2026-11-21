@@ -1,0 +1,43 @@
+who: developer adding session replay to a Litestar app
+
+needs:
+
+  - id: LF-7
+    text: >
+      When the developer adds ReplayPlugin, they can ingest rrweb event chunks and
+      play back a recording from any moment, loading from the last full snapshot before
+      the requested offset.
+    must: true
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#session-replay"}
+    proofs:
+      - "test:tests/test_replay.py::test_ingest_then_play"
+      - "test:tests/test_replay.py::test_offset_starts_at_the_last_snapshot_before_it"
+      - "test:tests/test_replay.py::test_offset_before_second_snapshot_loads_from_the_first"
+
+  - id: LF-8
+    text: >
+      When a recording session receives a repeated sequence number, the developer can
+      rely on the duplicate being ignored so the browser can retry safely.
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#ingest-api"}
+    proofs:
+      - "test:tests/test_replay.py::test_repeated_seq_is_ignored"
+
+  - id: LF-9
+    text: >
+      When a chunk or session exceeds the configured size cap, the developer can
+      expect a 413 response and no data shall be stored.
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#session-replay"}
+    proofs:
+      - "test:tests/test_replay.py::test_session_cap_refuses_the_chunk_that_would_pass_it"
+
+  - id: LF-10
+    text: >
+      When the operator requests a heatmap, they can see clicks aggregated by page
+      path and viewport width bucket.
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#session-replay"}
+    proofs:
+      - "test:tests/test_replay.py::test_heatmap_groups_clicks_by_path_and_bucket"

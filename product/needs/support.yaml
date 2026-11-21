@@ -1,0 +1,69 @@
+who: developer adding a support inbox to a Litestar app
+
+needs:
+
+  - id: LF-1
+    text: >
+      When the developer adds SupportPlugin, they can expose customer routes for
+      filing and threading issues and operator routes for managing and replying to them,
+      all stored in their own SQLAlchemy database.
+    must: true
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#support-inbox"}
+    proofs:
+      - "test:tests/test_support_rules.py::test_routes_mount_under_path"
+      - "test:src/litestar_feedback/support/contract.py::SupportContract::test_customer_opens_issue"
+      - "test:src/litestar_feedback/support/contract.py::SupportContract::test_operator_reply_reaches_customer"
+
+  - id: LF-2
+    text: >
+      When the operator changes an issue's status, they can rely on the allowed
+      transitions being enforced and receive 409 for moves that are not permitted.
+    must: true
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#rules"}
+    proofs:
+      - "test:src/litestar_feedback/support/contract.py::SupportContract::test_allowed_transitions"
+      - "test:src/litestar_feedback/support/contract.py::SupportContract::test_invalid_transitions_are_409"
+
+  - id: LF-3
+    text: >
+      When a customer comments on a closed issue, they can open a follow-up issue
+      linked to the closed one; an operator comment on a closed issue shall be rejected
+      with 409.
+    must: true
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#rules"}
+    proofs:
+      - "test:src/litestar_feedback/support/contract.py::SupportContract::test_customer_reply_on_closed_opens_follow_up"
+      - "test:src/litestar_feedback/support/contract.py::SupportContract::test_operator_reply_on_closed_is_409"
+      - "test:tests/test_support_rules.py::test_follow_up_keeps_scope_reporter_and_kind"
+
+  - id: LF-4
+    text: >
+      When a customer exceeds the configured message rate, they can expect a 429
+      with a Retry-After header and their message shall not be stored.
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#rules"}
+    proofs:
+      - "test:tests/test_support_rules.py::test_rate_limit_returns_429_with_retry_after"
+      - "test:tests/test_support_rules.py::test_follow_up_is_rate_limited"
+
+  - id: LF-5
+    text: >
+      When a public operator reply is committed, the developer can rely on the mailer
+      being called after the transaction; a rolled-back reply shall send no mail.
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#rules"}
+    proofs:
+      - "test:tests/test_support_rules.py::test_mail_is_sent_after_commit"
+      - "test:tests/test_support_rules.py::test_failed_commit_sends_no_mail"
+
+  - id: LF-6
+    text: >
+      When the developer installs the package, they can run the shipped contract test
+      class against their own app by defining five fixtures, without writing any test logic.
+    sources:
+      - {kind: secondary, date: 2026-11-21, locator: "README.md#contract-test"}
+    proofs:
+      - "test:tests/test_support_rules.py::test_contract_without_fixtures_says_what_to_define"
