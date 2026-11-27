@@ -22,7 +22,12 @@
 
 `SupportPlugin` stores customer issues with a reply thread and gives operators an inbox.
 `ReplayPlugin` stores rrweb recordings, returns them for playback from a chosen moment, and
-builds click heatmaps. Each plugin works alone. Status: alpha.
+builds click heatmaps. Each plugin works alone.
+
+Use it when you want a support inbox or session replay that lives in your own database and
+runs inside your own API, not as an external service.
+
+Status: alpha.
 
 ## Install
 
@@ -33,6 +38,78 @@ pip install litestar-feedback
 Replay needs no extra dependency. The `replay` extra exists and is empty.
 
 Requires Python 3.12+, Litestar 2.23+ and SQLAlchemy 2.0 async. No Advanced Alchemy.
+
+## Quickstart
+
+Add `SupportPlugin` to a Litestar app. This example uses in-memory SQLite
+(`pip install aiosqlite`):
+
+```python
+from contextlib import asynccontextmanager
+
+from litestar import Litestar
+from litestar.testing import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
+from litestar_feedback.support import (
+    Caller,
+    SupportAdapter,
+    SupportBase,
+    SupportConfig,
+    SupportPlugin,
+)
+
+engine = create_async_engine("sqlite+aiosqlite://", poolclass=StaticPool)
+sessions = async_sessionmaker(engine, expire_on_commit=False)
+
+
+async def caller(request):  # replace with your sign-in
+    return Caller(scope_id="tenant-1", user_id="user-1", actor="user@example.com")
+
+
+@asynccontextmanager
+async def session(caller):  # one transaction per request
+    async with sessions.begin() as s:
+        yield s
+
+
+async def create_tables():  # a real app uses an Alembic migration
+    async with engine.begin() as conn:
+        await conn.run_sync(SupportBase.metadata.create_all)
+
+
+app = Litestar(
+    plugins=[
+        SupportPlugin(
+            adapter=SupportAdapter(caller=caller, session=session),
+            config=SupportConfig(path="/v1"),
+        )
+    ],
+    on_startup=[create_tables],
+)
+
+with TestClient(app) as client:
+    created = client.post("/v1/issues", json={"body": "The export button does nothing."})
+    print(created.status_code, created.json()["status"])
+```
+
+```text
+201 open
+```
+
+Then create the tables from an Alembic migration:
+
+```python
+from alembic import op
+from litestar_feedback.support.migration import create_tables
+
+def upgrade() -> None:
+    create_tables(op)
+```
+
+A longer version with attachments and a mailer is
+[examples/support_app.py](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/examples/support_app.py).
 
 ## Support inbox
 
@@ -301,7 +378,52 @@ viewport pixels, not page pixels: rrweb reports clicks relative to the viewport.
 `replay_sessions`, `replay_chunks`, `replay_clicks`. Create them with
 `litestar_feedback.replay.migration.create_tables(op)` in an Alembic migration.
 
+## Why litestar-feedback
+
+A hosted support or replay service keeps customer messages and recordings on its servers. This
+library runs inside your API and writes to your own database. Attachments go to the object store
+you pass, and reply notices go through the mailer you pass.
+
+Use a hosted service when you want a ready inbox UI. This library has routes and tables, and no
+UI.
+
+## Key features
+
+- `SupportPlugin`: customer support inbox with reply thread, rate limiting, image attachments
+  and 14-day timers (`waiting_customer` becomes `resolved`, `resolved` becomes `closed`).
+- `ReplayPlugin`: rrweb session replay and click heatmaps, stored as chunks in your database.
+- Both plugins use your existing SQLAlchemy engine. No Advanced Alchemy, no external service.
+- Contract test for the support routes: inherit `SupportContract` and add five fixtures.
+- Alembic migration helpers: `create_tables(op)` and `drop_tables(op)`.
+- Each plugin works without the other.
+
+## Limits
+
+- No prebuilt inbox or replay viewer UI.
+- Status is alpha: the API can change between releases.
+- Replay stores chunk bodies as JSON in `replay_chunks.events`. For high recording volume, pass a
+  `ChunkStore` (your wrapper around S3 or another blob store) so the table holds only keys.
+- Tenant separation is a `scope_id` filter in the customer routes. Operator routes read across
+  all scopes. Row-level security is optional: you add the policies and set the tenant in
+  `session`.
+
 ## Links
 
-- [CHANGELOG.md](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/CHANGELOG.md)
-- [AGENTS.md](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/AGENTS.md)
+- Repository: <https://gitlab.com/cardona-oss/litestar-feedback>
+- PyPI: <https://pypi.org/project/litestar-feedback/>
+- Examples: [examples/](https://gitlab.com/cardona-oss/litestar-feedback/-/tree/main/examples)
+- Changelog: [CHANGELOG.md](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/CHANGELOG.md)
+
+## Contributing
+
+```bash
+uv sync
+make install-hooks
+```
+
+Then `make check` runs lint, format-check, typecheck and tests (the tests run against the
+example apps in `examples/`).
+
+## License
+
+MIT © Jorge Cardona. See [LICENSE](https://gitlab.com/cardona-oss/litestar-feedback/-/blob/main/LICENSE).
